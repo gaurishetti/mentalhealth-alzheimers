@@ -1,0 +1,103 @@
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import warnings
+warnings.filterwarnings("ignore")
+
+fp = open("Alz Train (Final)_orig.csv")
+header = fp.readline().strip().split(',')
+lines = fp.readlines()
+fp.close()
+X, Y = list(), list()
+for line in lines:
+    line = line.strip().split(',')
+    X.append([float(i) for i in line[:-1]])
+    Y.append(int(line[-1]))
+X, Y = np.array(X), np.array(Y)
+
+X_train, Y_train = list(), list()
+X_test, Y_test = list(), list()
+total_seeds = 200
+
+for i in range(total_seeds):
+    x_train, x_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=i)
+#     scaler = StandardScaler()
+#     x_train = scaler.fit_transform(x_train)
+#     x_test = scaler.transform(x_test)
+    X_train.append(x_train), Y_train.append(y_train)
+    X_test.append(x_test), Y_test.append(y_test)
+X_train, Y_train = np.array(X_train), np.array(Y_train)
+X_test, Y_test = np.array(X_test), np.array(Y_test)
+print(X_train.shape), print(X_test.shape)
+# del X, Y
+
+
+
+
+
+from tqdm.notebook import tqdm
+from itertools import chain, combinations
+from xgboost import XGBClassifier
+from sklearn.ensemble import RandomForestClassifier, BaggingClassifier
+from sklearn.model_selection import LeaveOneOut, KFold, StratifiedKFold
+from sklearn.metrics import accuracy_score, auc, f1_score, precision_recall_curve, roc_auc_score, precision_score, recall_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import confusion_matrix
+import math
+from sklearn.svm import SVC
+from vecstack import stacking
+
+def sigmoid(x):
+  return 1 / (1 + math.exp(-x))
+
+# final_features = ['Apolipoprotein_A1', 'Clusterin_Apo_J', 'Cystatin_C', 'VEGF', 'tau']
+final_features = ['Cystatin_C', 'MMP10', 'tau']
+indices = list()
+acc_tt, roc_auc_tt, f1_tt, pr_tt, re_tt, aupr_tt = list(), list(), list(), list(), list(), list()
+spec_tt = list()
+
+for i in final_features:
+    indices.append(header.index(i))
+
+for p in tqdm(range(total_seeds)):
+    x_train, x_test = np.transpose(X_train[p, :, indices]), np.transpose(X_test[p, :, indices])
+    scaler = StandardScaler()
+    x_train = scaler.fit_transform(x_train)
+    x_test = scaler.transform(x_test)
+    y_train, y_test = Y_train[p], Y_test[p]
+    
+#     model = LinearSVC(random_state=0)
+#     model.fit(x_train, y_train)
+#     preds_proba = [sigmoid(i) for i in model.decision_function(x_test)]
+#     preds = np.array([1 if i>0.398 else 0 for i in preds_proba])
+    
+    model1 = LinearSVC(random_state=0)
+    model2 = LogisticRegression(random_state=0)
+    model1.fit(x_train, y_train), model2.fit(x_train, y_train)
+    preds_proba2 = model2.predict_proba(x_test)[:,1]
+    preds_proba1 = [sigmoid(i) for i in model1.decision_function(x_test)]
+    preds_proba = np.mean((preds_proba1, preds_proba2), axis=0)
+    preds = np.array([1 if i>0.321 else 0 for i in preds_proba])
+
+    precision, recall, _ = precision_recall_curve(y_test, preds_proba)
+    CM = confusion_matrix(y_test, preds)
+    TN = CM[0][0]
+    FN = CM[1][0]
+    TP = CM[1][1]
+    FP = CM[0][1]
+    spec_tt.append(TN/(TN+FP))
+    acc_tt.append(accuracy_score(y_test, preds)), roc_auc_tt.append(roc_auc_score(y_test, preds_proba)), f1_tt.append(f1_score(y_test, preds))
+    pr_tt.append(precision_score(y_test, preds)), re_tt.append(TP/(TP+FN)), aupr_tt.append(auc(recall, precision))
+
+# print("Accuracy: ", sum(acc_tt)/total_seeds)
+print("ROC AUC: "+str(sum(roc_auc_tt)/total_seeds)+"\t(+-"+str(np.std(roc_auc_tt))+")")
+print("PR AUC: "+str(sum(aupr_tt)/total_seeds)+"\t(+-"+str(np.std(aupr_tt))+")")
+# print("F1-score: ", sum(f1_tt)/total_seeds)
+# print("Precision: ", sum(pr_tt)/total_seeds)
+print("Sensitivity: "+str(sum(re_tt)/total_seeds)+"\t(+-"+str(np.std(re_tt))+")")
+print("Specificity: "+str(sum(spec_tt)/total_seeds)+"\t(+-"+str(np.std(spec_tt))+")")
